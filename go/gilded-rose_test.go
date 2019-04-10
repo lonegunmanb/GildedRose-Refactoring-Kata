@@ -10,40 +10,33 @@ import (
 ======================================
 Gilded Rose Requirements Specification
 ======================================
+欢迎来到Gilded Rose
+Gilded Rose是魔兽世界中位于暴风城的一家客栈，他们同时也销售一些商品。
+为了维护商品保质期等信息，客栈请了一位炸鸡勇者开发了一套库存系统，然后开发者就离开了客栈投入了他的冒险旅程。
+你的任务是为这套库存系统添加一个新功能，使得客栈可以销售一种新的商品。
 
-Hi and welcome to team Gilded Rose. As you know, we are a small inn with a prime location in a
-prominent city ran by a friendly innkeeper named Allison. We also buy and sell only the finest goods.
-Unfortunately, our goods are constantly degrading in quality as they approach their sell by date. We
-have a system in place that updates our inventory for us. It was developed by a no-nonsense type named
-Leeroy, who has moved on to new adventures. Your task is to add the new feature to our system so that
-we can begin selling a new category of items. First an introduction to our system:
-	- All items have a SellIn value which denotes the number of days we have to sell the item
-	- All items have a Quality value which denotes how valuable the item is
-	- At the end of each day our system lowers both values for every item
+简单介绍一下当前的系统：
+所有的商品都由SellIn属性，代表距离过期还有多少天（0代表过期前最后一天）
+所有的商品都有Quality属性，代表商品的价值
+库存系统每天会执行盘点，在盘点中扣减商品的SellIn与Quality
 
-Pretty simple, right? Well this is where it gets interesting:
+特殊规则：
+- 一旦商品过期，商品价值以两倍速度扣减
+- 商品的价值不可为负数
+- "Aged Brie"的价值随着时间的流逝递增（每天增加1）
+- 商品的价值最大为50
+- "Sulfuras, Hand of Ragnaros"是一件传奇物品，是非卖品，保质期与价值不会变化
+- "Backstage passes to a TAFKAL80ETC concert"类似"Aged Brie"，其价值随着时间的流逝递增（每天增加1）；
+	从演出开始前10天开始，价值每天递增2
+	从演出开始前5天开始，价值每天递增3
+	演出结束后价值归零
 
-	- Once the sell by date has passed, Quality degrades twice as fast
-	- The Quality of an item is never negative
-	- "Aged Brie" actually increases in Quality the older it gets
-	- The Quality of an item is never more than 50
-	- "Sulfuras", being a legendary item, never has to be sold or decreases in Quality
-	- "Backstage passes", like aged brie, increases in Quality as its SellIn value approaches;
-	Quality increases by 2 when there are 10 days or less and by 3 when there are 5 days or less but
-	Quality drops to 0 after the concert
+客栈想要贩售的新商品是"Conjured Mana Cake"，类似于普通的商品，只是它的价值扣减的速度是普通商品的两倍
 
-We have recently signed a supplier of conjured items. This requires an update to our system:
+您可以对UpdateQuality进行您认为合适的修改，只要不要引入BUG就行。但是请不要修改Item类型极其属性的代码，因为一群残暴的
+食人魔认定他们拥有Item代码的所有权。
 
-	- "Conjured" items degrade in Quality twice as fast as normal items
-
-Feel free to make any changes to the UpdateQuality method and add any new code as long as everything
-still works correctly. However, do not alter the Item class or Items property as those belong to the
-goblin in the corner who will insta-rage and one-shot you as he doesn't believe in shared code
-ownership (you can make the UpdateQuality method and Items property static if you like, we'll cover
-for you).
-
-Just for clarification, an item can never have its Quality increase above 50, however "Sulfuras" is a
-legendary item and as such its Quality is 80 and it never alters.
+最后补充说明的是，商品的价值最大为50，但是"Sulfuras, Hand of Ragnaros"这件非卖品不受此限制，它的价值可以是80。
 */
 
 func TestShouldDecreaseSellIn(t *testing.T) {
@@ -97,14 +90,13 @@ func TestShouldDecreaseQualityTwiceAfterExpire(t *testing.T) {
 }
 
 func TestBrieShouldIncreaseQuality(t *testing.T) {
+	quality := 1
 	t.Run("Not Expire", func(t *testing.T) {
-		quality := 1
 		item, items := newItems("Aged Brie", 1, quality)
 		UpdateQuality(items)
 		assert.Equal(t, quality+1, item.quality)
 	})
 	t.Run("Expire", func(t *testing.T) {
-		quality := 1
 		item, items := newItems("Aged Brie", 0, quality)
 		UpdateQuality(items)
 		assert.Equal(t, quality+2, item.quality)
@@ -116,21 +108,24 @@ func TestQualityShouldNeverBeNegative(t *testing.T) {
 		"+5 Dexterity Vest",
 		"Elixir of the Mongoose",
 	}
-
+	inputs := []struct {
+		sellIn  int
+		quality int
+	}{
+		{1, 1},
+		{1, 0},
+		{0, 2},
+		{0, 1},
+		{0, 0},
+	}
 	for _, name := range names {
-		f := func(sellIn int, quality int) {
-			t.Run(fmt.Sprintf("%s sellIn:%d quality:%d", name, sellIn, quality), func(t *testing.T) {
-				item, items := newItems(name, sellIn, quality)
+		for _, input := range inputs {
+			t.Run(fmt.Sprintf("%s sellIn:%d quality:%d", name, input.sellIn, input.quality), func(t *testing.T) {
+				item, items := newItems(name, input.sellIn, input.quality)
 				UpdateQuality(items)
 				assert.Equal(t, 0, item.quality)
 			})
 		}
-
-		f(1, 1)
-		f(1, 0)
-		f(0, 2)
-		f(0, 1)
-		f(0, 0)
 	}
 }
 
@@ -140,24 +135,33 @@ func TestQualityShouldNotMoreThanFifty(t *testing.T) {
 		"Backstage passes to a TAFKAL80ETC concert",
 	}
 	for _, name := range names {
-		f := func(sellIn int) {
+		sellIns := []int{11, 10, 6, 5, 1, 0}
+		for _, sellIn := range sellIns {
 			t.Run(fmt.Sprintf("%s sellIn:%d", name, sellIn), func(t *testing.T) {
 				item, items := newItems(name, sellIn, 50)
 				UpdateQuality(items)
 				assert.True(t, item.quality <= 50)
 			})
 		}
-		f(11)
-		f(10)
-		f(6)
-		f(5)
-		f(1)
-		f(0)
 	}
 }
 
 func TestSulfurasNeverChangeSellInOrQuality(t *testing.T) {
-	f := func(sellIn int, quality int) {
+	inputs := []struct {
+		sellIn          int
+		expectedQuality int
+	}{
+		{10, 80},
+		{-10, 80},
+		{10, -1},
+		{0, 80},
+		{0, -1},
+		{-1, -1},
+	}
+
+	for _, input := range inputs {
+		quality := input.expectedQuality
+		sellIn := input.sellIn
 		t.Run(fmt.Sprintf("sellIn:%d quality:%d", sellIn, quality), func(t *testing.T) {
 			item, items := newItems("Sulfuras, Hand of Ragnaros", sellIn, quality)
 			UpdateQuality(items)
@@ -165,30 +169,29 @@ func TestSulfurasNeverChangeSellInOrQuality(t *testing.T) {
 			assert.Equal(t, quality, item.quality)
 		})
 	}
-
-	f(10, 80)
-	f(-10, 80)
-	f(10, -1)
-	f(0, 80)
-	f(0, -1)
-	f(-1, -1)
 }
 
 func TestBackstagePasses(t *testing.T) {
 	quality := 10
-	f := func(sellIn int, expectedQuality int) {
-		t.Run(fmt.Sprintf("sellIn:%d", sellIn), func(t *testing.T) {
-			item, items := newItems("Backstage passes to a TAFKAL80ETC concert", sellIn, quality)
+	inputs := []struct {
+		sellIn          int
+		expectedQuality int
+	}{
+		{11, quality + 1},
+		{10, quality + 2},
+		{6, quality + 2},
+		{5, quality + 3},
+		{1, quality + 3},
+		{0, 0},
+	}
+
+	for _, input := range inputs {
+		t.Run(fmt.Sprintf("sellIn:%d", input.sellIn), func(t *testing.T) {
+			item, items := newItems("Backstage passes to a TAFKAL80ETC concert", input.sellIn, quality)
 			UpdateQuality(items)
-			assert.Equal(t, expectedQuality, item.quality)
+			assert.Equal(t, input.expectedQuality, item.quality)
 		})
 	}
-	f(11, quality+1)
-	f(10, quality+2)
-	f(6, quality+2)
-	f(5, quality+3)
-	f(1, quality+3)
-	f(0, 0)
 }
 
 func newItems(name string, sellIn int, quality int) (*Item, []*Item) {
